@@ -170,10 +170,17 @@ type dep struct {
 }
 
 func (w *Writer) typeImports(dst []dep, t types.Type) []dep {
-	if p, ok := t.(*types.Pointer); ok {
+	switch p := t.(type) {
+	case *types.Pointer:
 		return w.typeImports(dst, p.Elem())
-	}
-	if p, ok := t.(*types.Slice); ok {
+	case *types.Slice:
+		return w.typeImports(dst, p.Elem())
+	case *types.Array:
+		return w.typeImports(dst, p.Elem())
+	case *types.Chan:
+		return w.typeImports(dst, p.Elem())
+	case *types.Map:
+		dst = w.typeImports(dst, p.Key())
 		return w.typeImports(dst, p.Elem())
 	}
 	n, ok := t.(*types.Named)
