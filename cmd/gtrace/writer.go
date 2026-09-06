@@ -173,6 +173,9 @@ func (w *Writer) typeImports(dst []dep, t types.Type) []dep {
 	if p, ok := t.(*types.Pointer); ok {
 		return w.typeImports(dst, p.Elem())
 	}
+	if p, ok := t.(*types.Slice); ok {
+		return w.typeImports(dst, p.Elem())
+	}
 	n, ok := t.(*types.Named)
 	if !ok {
 		return dst
