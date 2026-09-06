@@ -203,6 +203,60 @@ func TestCompose(t *testing.T) {
 	}
 }
 
+func TestComposeField(t *testing.T) {
+	var act []string
+	called := func(name string) {
+		act = append(act, name)
+	}
+	for _, test := range []struct {
+		name string
+		a    OuterTrace
+		b    OuterTrace
+		exp  []string
+	}{
+		{
+			name: "both inner and outer from a",
+			a: OuterTrace{
+				Inner:   InnerTrace{OnInner: func() { called("a:inner") }},
+				OnOuter: func() { called("a:outer") },
+			},
+			b:   OuterTrace{},
+			exp: []string{"a:inner", "a:outer"},
+		},
+		{
+			name: "both inner and outer from b",
+			a:    OuterTrace{},
+			b: OuterTrace{
+				Inner:   InnerTrace{OnInner: func() { called("b:inner") }},
+				OnOuter: func() { called("b:outer") },
+			},
+			exp: []string{"b:inner", "b:outer"},
+		},
+		{
+			name: "inner and outer from both a and b",
+			a: OuterTrace{
+				Inner:   InnerTrace{OnInner: func() { called("a:inner") }},
+				OnOuter: func() { called("a:outer") },
+			},
+			b: OuterTrace{
+				Inner:   InnerTrace{OnInner: func() { called("b:inner") }},
+				OnOuter: func() { called("b:outer") },
+			},
+			exp: []string{"a:inner", "b:inner", "a:outer", "b:outer"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Cleanup(func() { act = nil })
+			c := test.a.Compose(test.b)
+			c.Inner.onInner()
+			c.onOuter()
+			if exp := test.exp; !reflect.DeepEqual(act, exp) {
+				t.Fatalf("unexpected calls: %v; want %v", act, exp)
+			}
+		})
+	}
+}
+
 func TestShortcutPerFieldTrace(t *testing.T) {
 	var called bool
 	t0 := ShortcutPerFieldTrace{

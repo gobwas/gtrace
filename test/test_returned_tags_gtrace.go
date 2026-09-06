@@ -7,5 +7,38 @@ package test
 // Compose returns a new TraceReturningTraceTags which has functional fields composed
 // both from t and x.
 func (t TraceReturningTraceTags) Compose(x TraceReturningTraceTags) (ret TraceReturningTraceTags) {
+	switch {
+	case t.OnReturnedTrace == nil:
+		ret.OnReturnedTrace = x.OnReturnedTrace
+	case x.OnReturnedTrace == nil:
+		ret.OnReturnedTrace = t.OnReturnedTrace
+	default:
+		h1 := t.OnReturnedTrace
+		h2 := x.OnReturnedTrace
+		ret.OnReturnedTrace = func() ReturnedTrace {
+			r1 := h1()
+			r2 := h2()
+			switch {
+			case r1.isZero():
+				return r2
+			case r2.isZero():
+				return r1
+			default:
+				return r1.Compose(r2)
+			}
+		}
+	}
 	return ret
+}
+func (t TraceReturningTraceTags) onReturnedTrace() ReturnedTrace {
+	fn := t.OnReturnedTrace
+	if fn == nil {
+		return ReturnedTrace{}
+	}
+	res := fn()
+	return res
+}
+func traceReturningTraceTagsOnReturnedTrace(t TraceReturningTraceTags) ReturnedTrace {
+	res := t.onReturnedTrace()
+	return res
 }

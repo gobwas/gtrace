@@ -361,6 +361,9 @@ func (w *Writer) compose(trace *Trace) {
 		w.code(`func (`, t, ` `, trace.Name, `) Compose(`, x, ` `, trace.Name, `) `)
 		w.line(`(`, ret, ` `, trace.Name, `) {`)
 		w.block(func() {
+			for _, cf := range trace.ComposeFields {
+				w.line(ret, `.`, cf.Name, ` = `, t, `.`, cf.Name, `.Compose(`, x, `.`, cf.Name, `)`)
+			}
 			for _, hook := range trace.Hooks {
 				w.composeHook(hook, t, x, ret+"."+hook.Name)
 			}

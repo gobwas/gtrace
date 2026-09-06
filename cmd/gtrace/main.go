@@ -209,102 +209,49 @@ func main() {
 	if err != nil {
 		log.Fatalf("type error: %v", err)
 	}
-	var items []*GenItem
+	// Scan all package files. Source file items drive code generation;
+	// items from other files only populate the traces map so that composable
+	// fields referencing types defined in sibling files are recognized.
+	var (
+		srcItems []*GenItem // from source file only — drives code generation
+		pkgItems []*GenItem // from all package files — drives traces lookup
+	)
 	for i, astFile := range astFiles {
-		if pkgFiles[i].Name() != srcFilePath {
-			continue
+		isSrc := pkgFiles[i].Name() == srcFilePath
+		fileItems := scanGenItems(verbose, astFile)
+		pkgItems = append(pkgItems, fileItems...)
+		if isSrc {
+			srcItems = fileItems
 		}
-		var (
-			depth int
-			item  *GenItem
-		)
-		logf := func(s string, args ...interface{}) {
-			if !verbose {
-				return
-			}
-			log.Print(
-				strings.Repeat(" ", depth*4),
-				fmt.Sprintf(s, args...),
-			)
-		}
-		ast.Inspect(astFile, func(n ast.Node) (next bool) {
-			logf("%T", n)
-
-			if n == nil {
-				item = nil
-				depth--
-				return true
-			}
-			defer func() {
-				if next {
-					depth++
-				}
-			}()
-
-			switch v := n.(type) {
-			case
-				*ast.FuncDecl,
-				*ast.ValueSpec:
-				return false
-
-			case *ast.Ident:
-				logf("ident %q", v.Name)
-				if item != nil {
-					item.Ident = v
-				}
-				return false
-
-			case *ast.CommentGroup:
-				for i, c := range v.List {
-					logf("#%d comment %q", i, c.Text)
-
-					text, ok := TrimConfigComment(c.Text)
-					if ok {
-						if item == nil {
-							item = &GenItem{}
-						}
-						if err := item.ParseComment(text); err != nil {
-							log.Fatalf(
-								"malformed comment string: %q: %v",
-								text, err,
-							)
-						}
-					}
-				}
-				return false
-
-			case *ast.StructType:
-				logf("struct %+v", v)
-				if item != nil {
-					item.StructType = v
-					items = append(items, item)
-					item = nil
-				}
-				return false
-			}
-
-			return true
-		})
 	}
 	p := Package{
 		Package:          pkg,
 		BuildConstraints: buildConstraints,
 	}
 	traces := make(map[string]*Trace)
-	for _, item := range items {
-		t := &Trace{
+	for _, item := range pkgItems {
+		traces[item.Ident.Name] = &Trace{
 			Name: item.Ident.Name,
 			Flag: item.Flag,
 		}
-		p.Traces = append(p.Traces, t)
-		traces[item.Ident.Name] = t
 	}
-	for i, item := range items {
+	for _, item := range srcItems {
+		p.Traces = append(p.Traces, traces[item.Ident.Name])
+	}
+	for i, item := range srcItems {
 		t := p.Traces[i]
 		for _, field := range item.StructType.Fields.List {
+			if len(field.Names) == 0 {
+				continue
+			}
 			name := field.Names[0].Name
 			fn, ok := field.Type.(*ast.FuncType)
 			if !ok {
+				if isComposable(info, traces, field.Type) {
+					t.ComposeFields = append(t.ComposeFields, ComposeField{
+						Name: name,
+					})
+				}
 				continue
 			}
 			f, err := buildFunc(info, traces, fn)
@@ -345,6 +292,106 @@ func main() {
 	}
 
 	log.Println("OK")
+}
+
+func scanGenItems(verbose bool, astFile *ast.File) []*GenItem {
+	var (
+		depth int
+		item  *GenItem
+		items []*GenItem
+	)
+	logf := func(s string, args ...interface{}) {
+		if !verbose {
+			return
+		}
+		log.Print(
+			strings.Repeat(" ", depth*4),
+			fmt.Sprintf(s, args...),
+		)
+	}
+	ast.Inspect(astFile, func(n ast.Node) (next bool) {
+		logf("%T", n)
+
+		if n == nil {
+			item = nil
+			depth--
+			return true
+		}
+		defer func() {
+			if next {
+				depth++
+			}
+		}()
+
+		switch v := n.(type) {
+		case
+			*ast.FuncDecl,
+			*ast.ValueSpec:
+			return false
+
+		case *ast.Ident:
+			logf("ident %q", v.Name)
+			if item != nil {
+				item.Ident = v
+			}
+			return false
+
+		case *ast.CommentGroup:
+			for i, c := range v.List {
+				logf("#%d comment %q", i, c.Text)
+
+				text, ok := TrimConfigComment(c.Text)
+				if ok {
+					if item == nil {
+						item = &GenItem{}
+					}
+					if err := item.ParseComment(text); err != nil {
+						log.Fatalf(
+							"malformed comment string: %q: %v",
+							text, err,
+						)
+					}
+				}
+			}
+			return false
+
+		case *ast.StructType:
+			logf("struct %+v", v)
+			if item != nil {
+				item.StructType = v
+				items = append(items, item)
+				item = nil
+			}
+			return false
+		}
+
+		return true
+	})
+	return items
+}
+
+func isComposable(info types.Info, traces map[string]*Trace, expr ast.Expr) bool {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		_, ok := traces[x.Name]
+		return ok
+	case *ast.SelectorExpr:
+		t := info.TypeOf(x)
+		if t == nil {
+			return false
+		}
+		mset := types.NewMethodSet(t)
+		sel := mset.Lookup(nil, "Compose")
+		if sel == nil {
+			return false
+		}
+		sig, ok := sel.Type().(*types.Signature)
+		if !ok {
+			return false
+		}
+		return sig.Params().Len() == 1 && sig.Results().Len() == 1
+	}
+	return false
 }
 
 func buildFunc(info types.Info, traces map[string]*Trace, fn *ast.FuncType) (ret *Func, err error) {
@@ -446,13 +493,18 @@ type Package struct {
 }
 
 type Trace struct {
-	Name   string
-	Hooks  []Hook
-	Flag   GenFlag
-	Nested bool
+	Name          string
+	Hooks         []Hook
+	Flag          GenFlag
+	Nested        bool
+	ComposeFields []ComposeField
 }
 
 func (*Trace) isFuncResult() bool { return true }
+
+type ComposeField struct {
+	Name string
+}
 
 type Hook struct {
 	Name string
