@@ -48,7 +48,7 @@ func WithPingTrace(ctx context.Context, t PingTrace) context.Context {
 }
 
 // ContextPingTrace returns PingTrace associated with ctx.
-// If there is no PingTrace associated with ctx then zero value 
+// If there is no PingTrace associated with ctx then zero value
 // of PingTrace is returned.
 func ContextPingTrace(ctx context.Context) PingTrace {
 	t, _ := ctx.Value(pingTraceContextKey{}).(PingTrace)
@@ -57,7 +57,7 @@ func ContextPingTrace(ctx context.Context) PingTrace {
 
 func (t PingTrace) onRequest(ctx context.Context, p PingTraceRequestStart) func(PingTraceRequestDone) {
 	c := ContextPingTrace(ctx)
-	var fn func(PingTraceRequestStart) func(PingTraceRequestDone) 
+	var fn func(PingTraceRequestStart) func(PingTraceRequestDone)
 	switch {
 	case t.OnRequest == nil:
 		fn = c.OnRequest

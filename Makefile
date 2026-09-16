@@ -1,3 +1,6 @@
+# Recipes use [[ ]], which /bin/sh (dash on Debian/Ubuntu) does not support.
+SHELL := /bin/bash
+
 .PHONY: gtrace
 gtrace:
 	go build -o gtrace ./cmd/gtrace

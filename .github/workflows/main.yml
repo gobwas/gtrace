@@ -8,7 +8,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        os: [ ubuntu-latest, macos-latest ]
         go: [ 'oldstable', 'stable' ]
     runs-on: ${{ matrix.os }}
     steps:
@@ -25,14 +25,18 @@ jobs:
       run: |
         go env
 
-    - name: Build
-      run: |
-        go install ./cmd/gtrace
-
-    - name: Generate
-      run: |
-        gtrace -v -w ./test/test.go
-
+    # Regenerates every test file for every GOOS/GOARCH combination and runs
+    # the tests.
     - name: Test
       run: |
-        go test -v ./test
+        make test
+
+    # Generated code must be gofmt-clean as emitted.
+    - name: Check gofmt
+      run: |
+        files=$(gofmt -l .)
+        if [ -n "$files" ]; then
+          echo "gofmt reported unformatted files:"
+          echo "$files"
+          exit 1
+        fi

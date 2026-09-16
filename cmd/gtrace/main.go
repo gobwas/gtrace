@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/build"
+	"go/build/constraint"
 	"go/importer"
 	"go/parser"
 	"go/token"
@@ -156,7 +157,7 @@ func main() {
 		pkgFiles = make([]*os.File, 0, len(buildPkg.GoFiles))
 		astFiles = make([]*ast.File, 0, len(buildPkg.GoFiles))
 
-		buildConstraints []string
+		buildConstraint constraint.Expr
 	)
 	fset := token.NewFileSet()
 	for _, name := range buildPkg.GoFiles {
@@ -189,7 +190,7 @@ func main() {
 			if _, err := file.Seek(0, io.SeekStart); err != nil {
 				log.Fatal(err)
 			}
-			buildConstraints, err = scanBuildConstraints(file)
+			buildConstraint, err = scanBuildConstraint(file)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -225,8 +226,8 @@ func main() {
 		}
 	}
 	p := Package{
-		Package:          pkg,
-		BuildConstraints: buildConstraints,
+		Package:         pkg,
+		BuildConstraint: buildConstraint,
 	}
 	traces := make(map[string]*Trace)
 	for _, item := range pkgItems {
@@ -488,8 +489,8 @@ func splitOSArchTags(ctx *build.Context, name string) (base, tags, ext string) {
 type Package struct {
 	*types.Package
 
-	BuildConstraints []string
-	Traces           []*Trace
+	BuildConstraint constraint.Expr
+	Traces          []*Trace
 }
 
 type Trace struct {
@@ -609,26 +610,46 @@ func rsplit(s string, c byte) (s1, s2 string) {
 	return s[:i], s[i+1:]
 }
 
-func scanBuildConstraints(r io.Reader) (cs []string, err error) {
+// scanBuildConstraint reads the build constraint of a Go source file from r.
+// A "//go:build" line takes precedence over "// +build" lines; multiple
+// "// +build" lines are combined with AND, as the go tool does.
+// It returns nil if the file has no build constraint.
+func scanBuildConstraint(r io.Reader) (constraint.Expr, error) {
+	var (
+		goBuild   constraint.Expr
+		plusBuild constraint.Expr
+	)
 	br := bufio.NewReader(r)
 	for {
 		line, err := br.ReadBytes('\n')
 		if err != nil {
 			return nil, err
 		}
-		line = bytes.TrimSpace(line)
-		if comm := bytes.TrimPrefix(line, []byte("//")); !bytes.Equal(comm, line) {
-			comm = bytes.TrimSpace(comm)
-			if bytes.HasPrefix(comm, []byte("+build")) {
-				cs = append(cs, string(line))
-				continue
-			}
-		}
-		if bytes.HasPrefix(line, []byte("package ")) {
+		text := string(bytes.TrimSpace(line))
+		if strings.HasPrefix(text, "package ") {
 			break
 		}
+		isGoBuild := constraint.IsGoBuild(text)
+		if !isGoBuild && !constraint.IsPlusBuild(text) {
+			continue
+		}
+		expr, err := constraint.Parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("parse build constraint %q: %w", text, err)
+		}
+		switch {
+		case isGoBuild:
+			goBuild = expr
+		case plusBuild == nil:
+			plusBuild = expr
+		default:
+			plusBuild = &constraint.AndExpr{X: plusBuild, Y: expr}
+		}
 	}
-	return cs, nil
+	if goBuild != nil {
+		return goBuild, nil
+	}
+	return plusBuild, nil
 }
 
 func prettyPrint(w io.Writer, x interface{}) {
